@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Consulta de precios</title>
+<script src="https://unpkg.com/@zxing/library@0.21.3/umd/index.min.js"></script>
+<style>
+  :root {
+    --tinta: #14202e;
+    --papel: #f7f4ee;
+    --apagado: #7f8b99;
+    --linea: #2a3a4d;
+    --AJH: #d94f3d;
+    --ACH: #e0a33e;
+    --AKH: #5b9bbd;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body {
+    margin: 0; height: 100%; overflow: hidden;
+    background: var(--tinta); color: var(--papel);
+    font-family: -apple-system, "Helvetica Neue", Helvetica, Arial, sans-serif;
+    -webkit-text-size-adjust: 100%; -webkit-user-select: none; user-select: none;
+  }
+  body { display: flex; flex-direction: column; padding: 26px 34px 30px; }
+
+  header { display: flex; justify-content: space-between; align-items: baseline;
+           border-bottom: 1px solid var(--linea); padding-bottom: 12px; flex: 0 0 auto; }
+  header h1 { font-size: 19px; font-weight: 600; margin: 0; }
+  header span { font-size: 13px; color: var(--apagado); }
+
+  #escena { flex: 1; display: flex; gap: 34px; align-items: center; min-height: 0; padding: 24px 0; }
+  @media (orientation: portrait) { #escena { flex-direction: column; gap: 24px; } }
+
+  /* --- cámara --- */
+  #camara { position: relative; flex: 0 0 44%; aspect-ratio: 4/3; max-height: 100%;
+            border-radius: 14px; overflow: hidden; background: #0b1420; }
+  @media (orientation: portrait) { #camara { flex: 0 0 auto; width: 100%; } }
+  #video { width: 100%; height: 100%; object-fit: cover; display: block; }
+  #mira { position: absolute; inset: 18% 10%; border: 2px solid rgba(247,244,238,.85);
+          border-radius: 8px; box-shadow: 0 0 0 2000px rgba(11,20,32,.35); }
+  #mira::after { content: ""; position: absolute; left: 0; right: 0; top: 50%;
+                 height: 2px; background: var(--AJH); opacity: .9; }
+
+  #arranque { position: absolute; inset: 0; display: flex; flex-direction: column;
+              align-items: center; justify-content: center; gap: 18px; text-align: center;
+              padding: 24px; background: #0b1420; }
+  #arranque p { margin: 0; color: var(--apagado); font-size: 16px; line-height: 1.5; }
+  button { font: inherit; font-size: 20px; font-weight: 600; padding: 16px 30px;
+           border: 0; border-radius: 10px; background: var(--papel); color: var(--tinta); }
+  button:active { transform: scale(.98); }
+
+  /* --- resultado --- */
+  #salida { flex: 1; min-width: 0; }
+  .reposo { color: var(--apagado); font-size: 21px; line-height: 1.5; }
+
+  .ficha + .ficha { margin-top: 24px; padding-top: 24px; border-top: 1px solid var(--linea); }
+  .marca { display: inline-block; font-size: 13px; font-weight: 600;
+           padding: 4px 10px; border-radius: 4px; color: var(--tinta); }
+  .titulo { font-size: 26px; line-height: 1.3; margin: 12px 0 16px; max-width: 18em; }
+  .precio { font-size: 76px; font-weight: 600; line-height: 1;
+            font-variant-numeric: tabular-nums; letter-spacing: -.02em; }
+  .antes { font-size: 26px; color: var(--apagado); text-decoration: line-through; margin-left: 16px; }
+  .iva { font-size: 14px; color: var(--apagado); margin-top: 10px; }
+
+  .aviso { font-size: 24px; line-height: 1.45; max-width: 20em; }
+  .aviso strong { display: block; font-size: 30px; margin-bottom: 10px; font-weight: 600; }
+
+  footer { flex: 0 0 auto; color: var(--apagado); font-size: 12px; padding-top: 14px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Consulta de precios</h1>
+  <span>Aprende Japonés · Chino · Coreano Hoy</span>
+</header>
+
+<div id="escena">
+  <div id="camara">
+    <video id="video" playsinline muted></video>
+    <div id="mira" hidden></div>
+    <div id="arranque">
+      <p>Toca el botón y acerca el código de barras del libro.</p>
+      <button id="btn">Activar la cámara</button>
+    </div>
+  </div>
+  <div id="salida"></div>
+</div>
+
+<footer>Precios con IVA incluido. Pregunta en el mostrador si tienes dudas.</footer>
+
+<script>
+/* ------------------------------------------------------------------
+   1. Pega aquí la URL /exec de tu aplicación de Apps Script
+------------------------------------------------------------------ */
+var ENDPOINT = 'https://script.google.com/macros/s/XXXXXXXXXXXXXXXXXXXX/exec';
+
+var IDIOMAS = { AJH: 'Japonés', ACH: 'Chino', AKH: 'Coreano' };
+
+var salida = document.getElementById('salida');
+var arranque = document.getElementById('arranque');
+var mira = document.getElementById('mira');
+var lector, ultimoCodigo = '', ultimoMomento = 0, temporizador, audio;
+
+reposo();
+document.getElementById('btn').addEventListener('click', arrancarCamara);
+
+/* ------------------------------------------------------------------
+   2. Cámara
+------------------------------------------------------------------ */
+function arrancarCamara() {
+  try { audio = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) {}
+
+  var pistas = new Map();
+  pistas.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [
+    ZXing.BarcodeFormat.EAN_13, ZXing.BarcodeFormat.EAN_8, ZXing.BarcodeFormat.UPC_A
+  ]);
+  pistas.set(ZXing.DecodeHintType.TRY_HARDER, true);
+
+  lector = new ZXing.BrowserMultiFormatReader(pistas, 250);
+
+  lector.decodeFromConstraints(
+    { video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } } },
+    'video',
+    function (resultado) { if (resultado) alLeer(resultado.getText()); }
+  ).then(function () {
+    arranque.hidden = true;
+    mira.hidden = false;
+  }).catch(function (err) {
+    arranque.innerHTML = '<p>No se ha podido abrir la cámara.<br>' +
+      'Ajustes → Safari → Cámara → Permitir, y vuelve a cargar la página.<br>' +
+      '<span style="opacity:.6">' + esc(err && err.name || '') + '</span></p>';
+  });
+}
+
+function alLeer(codigo) {
+  var ahora = Date.now();
+  if (codigo === ultimoCodigo && ahora - ultimoMomento < 3000) return;
+  ultimoCodigo = codigo; ultimoMomento = ahora;
+  pitar();
+  consultar(codigo);
+}
+
+function pitar() {
+  if (!audio) return;
+  var o = audio.createOscillator(), g = audio.createGain();
+  o.frequency.value = 880; g.gain.value = .12;
+  o.connect(g); g.connect(audio.destination);
+  o.start(); o.stop(audio.currentTime + .09);
+}
+
+/* ------------------------------------------------------------------
+   3. Consulta a Apps Script (JSONP: evita el bloqueo CORS)
+------------------------------------------------------------------ */
+function consultar(codigo) {
+  pintar('<div class="reposo">Buscando…</div>', false);
+
+  var nombre = 'cb' + Date.now();
+  var etiqueta = document.createElement('script');
+  var reloj = setTimeout(function () { fallo(); }, 9000);
+
+  window[nombre] = function (r) { limpiar(); mostrar(r); };
+
+  function limpiar() {
+    clearTimeout(reloj);
+    delete window[nombre];
+    if (etiqueta.parentNode) etiqueta.parentNode.removeChild(etiqueta);
+  }
+  function fallo() {
+    limpiar();
+    pintar('<div class="aviso"><strong>Sin conexión</strong>' +
+           'No se ha podido consultar el precio. Pregunta en el mostrador.</div>');
+  }
+
+  etiqueta.onerror = fallo;
+  etiqueta.src = ENDPOINT + '?code=' + encodeURIComponent(codigo) + '&callback=' + nombre;
+  document.body.appendChild(etiqueta);
+}
+
+/* ------------------------------------------------------------------
+   4. Pantalla
+------------------------------------------------------------------ */
+function mostrar(r) {
+  if (r.estado === 'codigo_precio_jp') {
+    return pintar('<div class="aviso"><strong>Ese código no es el del libro</strong>' +
+      'Los libros japoneses llevan dos códigos de barras. Acerca el de arriba, el que empieza por 978.</div>');
+  }
+  if (r.estado !== 'ok' || !r.resultados.length) {
+    return pintar('<div class="aviso"><strong>No encontrado</strong>' +
+      'Este artículo no está en la web. Pregunta en el mostrador y te decimos el precio.</div>');
+  }
+  pintar(r.resultados.map(ficha).join(''));
+}
+
+function ficha(p) {
+  var precio = p.oferta !== null ? p.oferta : p.pvp;
+  return '<div class="ficha">' +
+    '<span class="marca" style="background:var(--' + p.tienda + ')">' +
+      esc(p.idioma || IDIOMAS[p.tienda] || p.tienda) + '</span>' +
+    '<div class="titulo">' + esc(p.nombre) + '</div>' +
+    '<div><span class="precio">' + euros(precio) + '</span>' +
+    (p.oferta !== null ? '<span class="antes">' + euros(p.pvp) + '</span>' : '') + '</div>' +
+    '<div class="iva">IVA incluido</div>' +
+    '</div>';
+}
+
+function euros(n) { return Number(n).toFixed(2).replace('.', ',') + ' €'; }
+
+function esc(t) {
+  return String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function pintar(html, conReloj) {
+  salida.innerHTML = html;
+  clearTimeout(temporizador);
+  if (conReloj !== false) temporizador = setTimeout(reposo, 30000);
+}
+
+function reposo() {
+  salida.innerHTML = '<div class="reposo">Acerca el código de barras a la cámara y verás el precio aquí.</div>';
+  ultimoCodigo = '';
+}
+</script>
+</body>
+</html>
