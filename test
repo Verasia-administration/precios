@@ -1,0 +1,22 @@
+<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;background:#111;color:#fff;font-family:sans-serif">
+<button id="b" style="font-size:22px;padding:18px;width:100%">カメラを開く</button>
+<p id="m" style="font-size:16px;padding:0 12px">まだ押していません</p>
+<video id="v" playsinline autoplay muted style="width:100%;background:#000"></video>
+<script>
+var m = document.getElementById('m');
+document.getElementById('b').onclick = function () {
+  m.textContent = '1: ボタンを検知';
+  if (!navigator.mediaDevices) { m.textContent = 'mediaDevices なし（httpsで開いていますか）'; return; }
+  navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } })
+    .then(function (s) {
+      m.textContent = '2: 許可OK、再生します';
+      var v = document.getElementById('v');
+      v.srcObject = s;
+      return v.play();
+    })
+    .then(function () { m.textContent = '3: 再生成功'; })
+    .catch(function (e) { m.textContent = 'エラー ' + e.name + ' / ' + e.message; });
+};
+window.onerror = function (msg) { m.textContent = 'JSエラー: ' + msg; };
+</script></body></html>
