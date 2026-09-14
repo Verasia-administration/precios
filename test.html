@@ -1,22 +1,33 @@
-<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<!DOCTYPE html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<script src="https://unpkg.com/@zxing/library@0.21.3/umd/index.min.js"></script>
+</head>
 <body style="margin:0;background:#111;color:#fff;font-family:sans-serif">
 <button id="b" style="font-size:22px;padding:18px;width:100%">カメラを開く</button>
 <p id="m" style="font-size:16px;padding:0 12px">まだ押していません</p>
 <video id="v" playsinline autoplay muted style="width:100%;background:#000"></video>
 <script>
 var m = document.getElementById('m');
+window.onerror = function (msg, u, l) { m.textContent = 'JSエラー: ' + msg + ' 行' + l; };
+m.textContent = (typeof ZXing === 'undefined') ? 'ZXing 読み込み失敗' : 'ZXing OK。押してください';
+
 document.getElementById('b').onclick = function () {
-  m.textContent = '1: ボタンを検知';
-  if (!navigator.mediaDevices) { m.textContent = 'mediaDevices なし（httpsで開いていますか）'; return; }
+  m.textContent = '1: 押した';
   navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } })
     .then(function (s) {
-      m.textContent = '2: 許可OK、再生します';
+      m.textContent = '2: 許可OK';
       var v = document.getElementById('v');
       v.srcObject = s;
       return v.play();
     })
-    .then(function () { m.textContent = '3: 再生成功'; })
+    .then(function () {
+      m.textContent = '3: 映像OK。読み取り開始';
+      var lector = new ZXing.BrowserMultiFormatReader();
+      lector.decodeFromVideoElement(document.getElementById('v'), function (r) {
+        if (r) m.textContent = '4: 読めた → ' + r.getText();
+      });
+      m.textContent = '5: 読み取り待機中';
+    })
     .catch(function (e) { m.textContent = 'エラー ' + e.name + ' / ' + e.message; });
 };
-window.onerror = function (msg) { m.textContent = 'JSエラー: ' + msg; };
 </script></body></html>
