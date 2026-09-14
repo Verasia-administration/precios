@@ -33,25 +33,24 @@
   #escena { flex: 1; display: flex; gap: 34px; align-items: center; min-height: 0; padding: 24px 0; }
   @media (orientation: portrait) { #escena { flex-direction: column; gap: 24px; } }
 
-  /* --- cámara --- */
   #camara { position: relative; flex: 0 0 44%; aspect-ratio: 4/3; max-height: 100%;
             border-radius: 14px; overflow: hidden; background: #0b1420; }
   @media (orientation: portrait) { #camara { flex: 0 0 auto; width: 100%; } }
-    #video { width: 100%; height: 100%; object-fit: cover; display: block; transform: scaleX(-1); }
+  #video { width: 100%; height: 100%; object-fit: cover; display: block; transform: scaleX(-1); }
   #mira { position: absolute; inset: 18% 10%; border: 2px solid rgba(247,244,238,.85);
           border-radius: 8px; box-shadow: 0 0 0 2000px rgba(11,20,32,.35); }
   #mira::after { content: ""; position: absolute; left: 0; right: 0; top: 50%;
                  height: 2px; background: var(--AJH); opacity: .9; }
 
   #arranque { position: absolute; inset: 0; display: flex; flex-direction: column;
-              align-items: center; justify-content: center; gap: 18px; text-align: center;
-              padding: 24px; background: #0b1420; }
-  #arranque p { margin: 0; color: var(--apagado); font-size: 16px; line-height: 1.5; }
+              align-items: center; justify-content: center; gap: 16px; text-align: center;
+              padding: 20px; background: #0b1420; overflow: auto; }
+  #arranque p { margin: 0; color: var(--apagado); font-size: 15px; line-height: 1.5;
+                word-break: break-word; }
   button { font: inherit; font-size: 20px; font-weight: 600; padding: 16px 30px;
            border: 0; border-radius: 10px; background: var(--papel); color: var(--tinta); }
   button:active { transform: scale(.98); }
 
-  /* --- resultado --- */
   #salida { flex: 1; min-width: 0; }
   .reposo { color: var(--apagado); font-size: 21px; line-height: 1.5; }
 
@@ -79,10 +78,10 @@
 
 <div id="escena">
   <div id="camara">
-    <video id="video" playsinline muted></video>
+    <video id="video" playsinline autoplay muted></video>
     <div id="mira" hidden></div>
     <div id="arranque">
-      <p>Toca el botón y acerca el código de barras del libro.</p>
+      <p id="mensaje">Toca el botón y acerca el código de barras del libro.</p>
       <button id="btn">Activar la cámara</button>
     </div>
   </div>
@@ -92,46 +91,62 @@
 <footer>Precios con IVA incluido. Pregunta en el mostrador si tienes dudas.</footer>
 
 <script>
-/* ------------------------------------------------------------------
-   1. Pega aquí la URL /exec de tu aplicación de Apps Script
------------------------------------------------------------------- */
 var ENDPOINT = 'https://script.google.com/macros/s/AKfycbwOJct94eYgbM8ISLKMV_xhG5kl8Rh3Nh3Po8kBLlozMPsY7tccpxApA8JuRMDZvAaT/exec';
 
 var IDIOMAS = { AJH: 'Japonés', ACH: 'Chino', AKH: 'Coreano' };
 
 var salida = document.getElementById('salida');
 var arranque = document.getElementById('arranque');
+var mensaje = document.getElementById('mensaje');
 var mira = document.getElementById('mira');
 var lector, ultimoCodigo = '', ultimoMomento = 0, temporizador, audio;
+
+/* Cualquier fallo se ve dentro del recuadro de la cámara. */
+function decir(txt) { mensaje.textContent = txt; arranque.hidden = false; }
+window.onerror = function (msg, url, linea) { decir('Error JS: ' + msg + ' (línea ' + linea + ')'); };
 
 reposo();
 document.getElementById('btn').addEventListener('click', arrancarCamara);
 
-/* ------------------------------------------------------------------
-   2. Cámara
------------------------------------------------------------------- */
 function arrancarCamara() {
+  decir('Abriendo la cámara…');
+
+  if (typeof ZXing === 'undefined') {
+    return decir('No se ha cargado la librería ZXing. Comprueba la conexión a internet.');
+  }
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    return decir('Este navegador no da acceso a la cámara. Abre la página en Safari y con https.');
+  }
+
   try { audio = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) {}
 
-  var pistas = new Map();
-  pistas.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [
-    ZXing.BarcodeFormat.EAN_13, ZXing.BarcodeFormat.EAN_8, ZXing.BarcodeFormat.UPC_A
-  ]);
-  pistas.set(ZXing.DecodeHintType.TRY_HARDER, true);
+  var video = document.getElementById('video');
+  video.setAttribute('playsinline', '');
+  video.setAttribute('autoplay', '');
+  video.muted = true;
 
-  lector = new ZXing.BrowserMultiFormatReader(pistas, 250);
-
-  lector.decodeFromConstraints(
-        { video: { facingMode: { ideal: 'user' }, width: { ideal: 1920 }, height: { ideal: 1080 } } },
-    'video',
-    function (resultado) { if (resultado) alLeer(resultado.getText()); }
-  ).then(function () {
+  navigator.mediaDevices.getUserMedia({
+    video: { facingMode: { ideal: 'user' }, width: { ideal: 1280 }, height: { ideal: 720 } }
+  }).then(function (flujo) {
+    video.srcObject = flujo;
+    return video.play();
+  }).then(function () {
     arranque.hidden = true;
     mira.hidden = false;
+
+    var pistas = new Map();
+    pistas.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [
+      ZXing.BarcodeFormat.EAN_13, ZXing.BarcodeFormat.EAN_8, ZXing.BarcodeFormat.UPC_A
+    ]);
+    pistas.set(ZXing.DecodeHintType.TRY_HARDER, true);
+
+    lector = new ZXing.BrowserMultiFormatReader(pistas, 250);
+    lector.decodeFromVideoElement(video, function (resultado) {
+      if (resultado) alLeer(resultado.getText());
+    });
   }).catch(function (err) {
-    arranque.innerHTML = '<p>No se ha podido abrir la cámara.<br>' +
-      'Ajustes → Safari → Cámara → Permitir, y vuelve a cargar la página.<br>' +
-      '<span style="opacity:.6">' + esc(err && err.name || '') + '</span></p>';
+    decir('No se ha podido abrir la cámara: ' +
+          (err && err.name || '?') + ' — ' + (err && err.message || ''));
   });
 }
 
@@ -151,9 +166,6 @@ function pitar() {
   o.start(); o.stop(audio.currentTime + .09);
 }
 
-/* ------------------------------------------------------------------
-   3. Consulta a Apps Script (JSONP: evita el bloqueo CORS)
------------------------------------------------------------------- */
 function consultar(codigo) {
   pintar('<div class="reposo">Buscando…</div>', false);
 
@@ -179,9 +191,6 @@ function consultar(codigo) {
   document.body.appendChild(etiqueta);
 }
 
-/* ------------------------------------------------------------------
-   4. Pantalla
------------------------------------------------------------------- */
 function mostrar(r) {
   if (r.estado === 'codigo_precio_jp') {
     return pintar('<div class="aviso"><strong>Ese código no es el del libro</strong>' +
